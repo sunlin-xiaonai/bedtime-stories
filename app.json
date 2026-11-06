@@ -1,7 +1,7 @@
 {
   "slug": "bedtime-stories",
   "kind": "extension",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "name": {
     "zh": "晚安故事",
     "en": "Bedtime Stories"
@@ -46,5 +46,15 @@
   "audience": "all",
   "pricing": {
     "kind": "free"
-  }
+  },
+  "voiceCode": {
+    "number": 263
+  },
+  "permissions": {
+    "device": [
+      "speaker",
+      "tf_card"
+    ]
+  },
+  "ageRating": "4+"
 }
