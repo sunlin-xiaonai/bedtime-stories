@@ -47,4 +47,8 @@
 
 ## 猫和老鼠：独立播客英文绘本朗读（个人测试素材）
 
-《这本书不是一块奶酪》由 [Storytime with K](https://podcasters.spotify.com/pod/show/storytimewithk) 朗读，公开播客单集为 *Tom and Jerry: This Book Is Not A Piece Of Cheese*。原书作者 Benjamin Bird，插画 Carmen Perez，出版方 Capstone Young Readers。该录音是独立主播朗读，并非已确认的官方录音；本次仅从主播公开 RSS 获取并转换格式，放在这台设备供个人测试。录音及原书的版权归各自权利方所有，公开收听不代表可以随应用重新分发。
+以下内容由独立主播公开发布，并非已确认的官方录音；本次从各播客公开 RSS 获取并转换格式，放在这台设备供个人测试。录音、原书和角色的版权归各自权利方所有，公开收听不代表可以随应用重新分发。中文标题是本应用为识别添加的译名。
+
+- 《不是奶酪》：由 [Storytime with K](https://podcasters.spotify.com/pod/show/storytimewithk) 朗读 *Tom and Jerry: This Book Is Not A Piece Of Cheese*。原书作者 Benjamin Bird，插画 Carmen Perez，出版方 Capstone Young Readers。
+- 《汪汪队奇遇》：由 [Sleepytime Pups](https://podcasters.spotify.com/pod/show/dave-whiteway) 制作的 *Paw Patrol: Tom and Jerry*，是一篇汪汪队与猫和老鼠的英文跨界睡前故事。
+- 《安静的夜晚》：由 [Bedtime Stories for Dreamers](https://redcircle.com/shows/bedtime-stories-for-dreamers) 制作的 *Tom and Jerry and the Longest Truce*，是一篇英文睡前故事。

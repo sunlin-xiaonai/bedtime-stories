@@ -1,10 +1,11 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-#define STORY_COUNT 38
+#define STORY_COUNT 40
 #define THOMAS_FIRST 29
 #define THOMAS_COUNT 8
 #define CAT_INDEX (THOMAS_FIRST + THOMAS_COUNT)
+#define CAT_COUNT 3
 typedef struct {
     const char *id, *title, *sha256;
     uint32_t size;
