@@ -97,12 +97,12 @@ static void tick(lv_timer_t *timer) {
     int64_t now = esp_timer_get_time();
     if (key_tap) {
         key_tap = false; activity();
-        if (board_display_asleep()) board_display_wake(yk_app_brightness());
+        if (board_display_asleep()) board_display_wake(board_pref_brightness());
         else if (library) { library = false; refresh(); }
         else if (playing) { pause_story(); refresh(); }
         else board_display_sleep();
     }
-    int off_s = yk_app_screen_off_s();
+    int off_s = board_pref_screen_off_s();
     if (off_s > 0 && !board_display_asleep() && now - last_input_us >= (int64_t)off_s * 1000000) board_display_sleep();
     if (deadline_us && now >= deadline_us) { stop_audio(); position_us = 0; deadline_us = 0; refresh(); }
     if (playing && now - started_us > 1000000 && !yk_speak_busy()) { playing = false; position_us = 0; deadline_us = 0; refresh(); }
@@ -126,9 +126,9 @@ void app_main(void) {
     esp_err_t err = nvs_flash_init();
     if (err != ESP_OK) ESP_LOGE(APP_SLUG, "NVS unavailable: %s", esp_err_to_name(err));
     ESP_ERROR_CHECK(yk_app_start(&(yk_app_config_t){.slug=APP_SLUG,.version=APP_VERSION}));
-    yk_app_on_leave(on_leave, NULL); english = yk_app_english();
+    yk_app_on_leave(on_leave, NULL); english = false;
     if (!board_display_start_opts(&(board_display_opts_t){.start_dark=true})) return;
-    ESP_ERROR_CHECK(yk_speak_init()); yk_speak_volume(yk_app_volume());
+    ESP_ERROR_CHECK(yk_speak_init()); yk_speak_volume(board_pref_volume());
     ESP_ERROR_CHECK(yk_key_init(&(yk_key_config_t){.delay_tap=true}));
     ESP_ERROR_CHECK(yk_app_on_key(on_key, NULL));
     const yk_link_config_t link = {.board="tikpal-r1",.app_slug=APP_SLUG,.app_version=APP_VERSION,.layout="yaykit-v1",.idle_seconds=90,.on_command=on_command};
@@ -152,7 +152,7 @@ void app_main(void) {
         yk_ui_label(row,english?books[i].en:books[i].zh,0,18,340,YK_SIZE_SUBTITLE_SMALL,YK_INK);
     }
     yk_ui_label(list_view,T("点故事播放 · 下滑返回","Tap a story · Swipe down"),0,370,466,YK_SIZE_MIN,YK_INK2);
-    refresh(); lv_screen_load(screen); lv_refr_now(NULL); board_brightness_set(yk_app_brightness());
+    refresh(); lv_screen_load(screen); lv_refr_now(NULL); board_brightness_set(board_pref_brightness());
     if (yk_hint_should(YK_HINT_APPS)) yk_hint_show(screen,YK_HINT_APPS,NULL);
     last_input_us = esp_timer_get_time(); lv_timer_create(tick,100,NULL); board_unlock();
     console_start(); yk_app_ready();

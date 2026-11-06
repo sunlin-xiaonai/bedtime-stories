@@ -10,7 +10,7 @@
     "tikpal-r1"
   ],
   "layout": "yaykit-v1",
-  "minYay": "0.1.13",
+  "minYay": "0.1.10",
   "apiLevel": 3,
   "capabilities": {},
   "launch": {
