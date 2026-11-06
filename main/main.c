@@ -35,7 +35,11 @@ static size_t selected;
 static bool english, playing, library;
 static int64_t started_us, deadline_us, position_us, last_input_us;
 static volatile bool key_tap;
-static lv_obj_t *home_view, *list_view, *heading, *name_label, *mark_label, *hint_label, *book_shape;
+extern const uint8_t plant_img[] asm("_binary_plant_bin_start");
+extern const uint8_t book_img[] asm("_binary_book_bin_start");
+extern const uint8_t animal_img[] asm("_binary_animal_bin_start");
+static lv_image_dsc_t pictures[3];
+static lv_obj_t *home_view, *list_view, *heading, *name_label, *hint_label, *book_shape;
 static const char *T(const char *zh, const char *en) { return english ? en : zh; }
 
 static bool on_key(const yk_key_event_t *ev, void *ctx) {
@@ -47,9 +51,8 @@ static void stop_audio(void) { yk_speak_cancel(); playing = false; }
 static void refresh(void) {
     lv_label_set_text(heading, playing ? T("正在播放", "Playing") : T("晚安故事", "Bedtime stories"));
     lv_label_set_text(name_label, english ? books[selected].en : books[selected].zh);
-    lv_label_set_text(mark_label, english ? "*" : books[selected].mark);
     lv_label_set_text(hint_label, playing ? T("轻点暂停 · 上滑书架", "Tap to pause · Swipe up") : T("轻点播放 · 上滑书架", "Tap to play · Swipe up"));
-    lv_obj_set_style_bg_color(book_shape, lv_color_hex(books[selected].color), 0);
+    lv_image_set_src(book_shape, &pictures[selected]);
     if (library) { lv_obj_add_flag(home_view, LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(list_view, LV_OBJ_FLAG_HIDDEN); }
     else { lv_obj_add_flag(list_view, LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(home_view, LV_OBJ_FLAG_HIDDEN); }
 }
@@ -141,8 +144,9 @@ void app_main(void) {
     home_view=lv_obj_create(screen); lv_obj_remove_style_all(home_view); lv_obj_set_size(home_view,466,466); lv_obj_set_scrollable(home_view,false);
     lv_obj_add_flag(home_view, LV_OBJ_FLAG_EVENT_BUBBLE); lv_obj_add_event_cb(home_view,on_screen_click,LV_EVENT_CLICKED,NULL);
     heading=yk_ui_label(home_view,"",0,65,466,YK_SIZE_STATUS,YK_SAGE_TEXT);
-    book_shape=lv_obj_create(home_view); lv_obj_remove_style_all(book_shape); lv_obj_set_size(book_shape,124,120); lv_obj_set_pos(book_shape,171,130); lv_obj_set_style_radius(book_shape,14,0); lv_obj_remove_flag(book_shape,LV_OBJ_FLAG_CLICKABLE);
-    mark_label=yk_ui_label(home_view,"",0,157,466,YK_SIZE_HEADING,YK_PAPER);
+    const uint8_t *art[] = {plant_img, book_img, animal_img};
+    for (size_t i=0; i<BOOKS; i++) pictures[i] = (lv_image_dsc_t){.header={.magic=LV_IMAGE_HEADER_MAGIC,.cf=LV_COLOR_FORMAT_RGB565,.w=160,.h=140,.stride=320},.data_size=160*140*2,.data=art[i]};
+    book_shape=lv_image_create(home_view); lv_obj_set_pos(book_shape,153,120); lv_obj_remove_flag(book_shape,LV_OBJ_FLAG_CLICKABLE);
     name_label=yk_ui_label(home_view,"",55,270,356,YK_SIZE_HEADING,YK_INK);
     hint_label=yk_ui_label(home_view,"",0,350,466,YK_SIZE_MIN,YK_INK2);
     list_view=lv_obj_create(screen); lv_obj_remove_style_all(list_view); lv_obj_set_size(list_view,466,466); lv_obj_set_scrollable(list_view,false); lv_obj_add_flag(list_view,LV_OBJ_FLAG_EVENT_BUBBLE);
