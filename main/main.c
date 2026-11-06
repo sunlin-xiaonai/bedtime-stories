@@ -40,7 +40,9 @@ static volatile bool test_inspect, test_redraw;
 extern const uint8_t plant_img[] asm("_binary_plant_bin_start");
 extern const uint8_t book_img[] asm("_binary_book_bin_start");
 extern const uint8_t animal_img[] asm("_binary_animal_bin_start");
-static lv_image_dsc_t pictures[3];
+extern const uint8_t train_img[] asm("_binary_train_bin_start");
+extern const uint8_t cat_img[] asm("_binary_cat_bin_start");
+static lv_image_dsc_t pictures[5];
 static lv_obj_t *home_view, *list_view, *list_rows, *heading, *name_label, *hint_label, *book_shape;
 static lv_obj_t *library_title, *mode_label, *timer_label;
 
@@ -248,7 +250,10 @@ static lv_obj_t *control(lv_obj_t *parent, int x, lv_event_cb_t cb, lv_obj_t **l
 static void rebuild_shelf(void) {
     lv_obj_clean(list_rows);
     size_t rownum = 0;
-    for (size_t i=0; i<story_catalog_count; i++) {
+    for (size_t pos=0; pos<story_catalog_count; pos++) {
+        const size_t lead = 3, featured = THOMAS_COUNT + 1;
+        size_t i = pos < lead ? pos : pos == lead ? CAT_INDEX :
+                   pos < lead + featured ? THOMAS_FIRST + pos - lead - 1 : pos - featured;
         if (!available[i]) continue;
         lv_obj_t *row = lv_obj_create(list_rows);
         lv_obj_remove_style_all(row); lv_obj_set_pos(row, 0, (int)rownum * 67); lv_obj_set_size(row, 316, 62);
@@ -285,8 +290,8 @@ void app_main(void) {
     home_view=lv_obj_create(screen); lv_obj_remove_style_all(home_view); lv_obj_set_size(home_view,466,466); lv_obj_set_scrollable(home_view,false);
     lv_obj_set_event_bubble(home_view, true); lv_obj_add_event_cb(home_view,on_screen_click,LV_EVENT_CLICKED,NULL);
     heading=yk_ui_label(home_view,"",0,65,466,YK_SIZE_STATUS,YK_SAGE_TEXT);
-    const uint8_t *art[] = {plant_img, book_img, animal_img};
-    for (size_t i=0; i<3; i++) pictures[i] = (lv_image_dsc_t){.header={.magic=LV_IMAGE_HEADER_MAGIC,.cf=LV_COLOR_FORMAT_RGB565,.w=160,.h=140,.stride=320},.data_size=160*140*2,.data=art[i]};
+    const uint8_t *art[] = {plant_img, book_img, animal_img, train_img, cat_img};
+    for (size_t i=0; i<sizeof(art)/sizeof(art[0]); i++) pictures[i] = (lv_image_dsc_t){.header={.magic=LV_IMAGE_HEADER_MAGIC,.cf=LV_COLOR_FORMAT_RGB565,.w=160,.h=140,.stride=320},.data_size=160*140*2,.data=art[i]};
     book_shape=lv_image_create(home_view); lv_obj_set_pos(book_shape,153,120); lv_obj_set_clickable(book_shape,false);
     name_label=yk_ui_label(home_view,"",55,270,356,YK_SIZE_HEADING,YK_INK);
     lv_label_set_long_mode(name_label, LV_LABEL_LONG_DOT);
