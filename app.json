@@ -3,8 +3,8 @@
   "kind": "extension",
   "version": "0.1.0",
   "name": {
-    "zh": "bedtime-stories",
-    "en": "bedtime-stories"
+    "zh": "晚安故事",
+    "en": "Bedtime Stories"
   },
   "boards": [
     "tikpal-r1"
@@ -15,26 +15,29 @@
   "capabilities": {},
   "launch": {
     "summary": {
-      "zh": "计数器样板：短按加一，按住清零。",
-      "en": "Counter template: tap to count, hold to reset."
+      "zh": "选择故事，听完后安静入睡。",
+      "en": "Choose a story and listen at bedtime."
     },
     "examples": {
       "zh": [
-        "打开计数器",
-        "帮我数数"
+        "打开晚安故事",
+        "我想听睡前故事",
+        "给我讲个故事"
       ],
       "en": [
-        "Open the counter",
-        "Count for me"
+        "Open Bedtime Stories",
+        "Play a bedtime story",
+        "Tell me a story"
       ]
     }
   },
   "aliases": {
     "zh": [
-      "计数器"
+      "晚安故事",
+      "睡前故事"
     ],
     "en": [
-      "Counter"
+      "Bedtime Stories"
     ]
   },
   "scenes": [

@@ -1,184 +1,159 @@
-// Extension firmware template (yaykit/docs/development/firmware-guide.md 6, yay-device.md 6.10). It shows the
-// order every extension firmware follows: NVS (never erased) -> yaykit_app (crash loop guard) -> board -> side
-// key -> Yaykit Link -> screen -> console -> yk_app_ready(). The app itself is a tap counter: tap adds one, hold resets, a double
-// click opens the app ring (yaykit_app), and the first time in the app the hint arrow says so (yk_hint APPS). Copy
-// this directory, rename the slug and the project, then replace the counter with your app.
 #include <stdio.h>
 #include <string.h>
-
 #include "board.h"
 #include "cjk_font.h"
-#include "counter.h"
 #include "esp_console.h"
-#include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "esp_system.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
+#include "story.h"
 #include "yaykit_app.h"
 #include "yaykit_key.h"
 #include "yaykit_link.h"
+#include "yaykit_speak.h"
 #include "yaykit_ui.h"
 #include "yk_hint.h"
 
 #define APP_SLUG "bedtime-stories"
-static const char *TAG = "bedtime-stories";
+#define SLEEP_US (15LL * 60 * 1000000)
+#define FRAME_US 20000LL
 
-static counter_t s_count;
-static int s_rounds, s_best_round = -1;  // rounds ended with a hold, and which one was the best (0-based)
-static lv_obj_t *s_value;
-static volatile bool s_tapped, s_held;  // set in the key task, acted on in the LVGL task
+extern const uint8_t khalai_start[] asm("_binary_khalai_bin_start");
+extern const uint8_t khalai_end[] asm("_binary_khalai_bin_end");
+extern const uint8_t read_start[] asm("_binary_read_bin_start");
+extern const uint8_t read_end[] asm("_binary_read_bin_end");
+extern const uint8_t counting_start[] asm("_binary_counting_bin_start");
+extern const uint8_t counting_end[] asm("_binary_counting_bin_end");
+typedef struct { const char *zh, *en, *mark; const uint8_t *start, *end; uint32_t color; } book_t;
+static const book_t books[] = {
+    {"和植物聊天的卡莱", "Khalai and plants", "叶", khalai_start, khalai_end, YK_SAGE},
+    {"我喜欢看书", "I like to read", "书", read_start, read_end, YK_CORAL},
+    {"数数动物", "Counting animals", "星", counting_start, counting_end, YK_AMBER},
+};
+#define BOOKS (sizeof(books) / sizeof(books[0]))
+static size_t selected;
+static bool english, playing, library;
+static int64_t started_us, deadline_us, position_us, last_input_us;
+static volatile bool key_tap;
+static lv_obj_t *home_view, *list_view, *heading, *name_label, *mark_label, *hint_label, *book_shape;
+static const char *T(const char *zh, const char *en) { return english ? en : zh; }
 
-/** Through yaykit_app (yk_app_on_key): returns whether the event was used. A hold an app does not use asks
- *  「回到 Yay 说？」; this one uses both. */
 static bool on_key(const yk_key_event_t *ev, void *ctx) {
     (void)ctx;
-    if (ev->type == YK_KEY_TAP) s_tapped = true;
-    else if (ev->type == YK_KEY_HOLD) s_held = true;
-    // YK_KEY_DOUBLE is yaykit_app's: the app ring.
-    return ev->type == YK_KEY_TAP || ev->type == YK_KEY_HOLD;
+    if (ev->type == YK_KEY_TAP) { key_tap = true; return true; }
+    return false;
 }
-
-static void show(void) {
-    char text[32];
-    counter_text(&s_count, false, text, sizeof(text));
-    lv_label_set_text(s_value, text);
+static void stop_audio(void) { yk_speak_cancel(); playing = false; }
+static void refresh(void) {
+    lv_label_set_text(heading, playing ? T("正在播放", "Playing") : T("晚安故事", "Bedtime stories"));
+    lv_label_set_text(name_label, english ? books[selected].en : books[selected].zh);
+    lv_label_set_text(mark_label, english ? "*" : books[selected].mark);
+    lv_label_set_text(hint_label, playing ? T("轻点暂停 · 上滑书架", "Tap to pause · Swipe up") : T("轻点播放 · 上滑书架", "Tap to play · Swipe up"));
+    lv_obj_set_style_bg_color(book_shape, lv_color_hex(books[selected].color), 0);
+    if (library) { lv_obj_add_flag(home_view, LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(list_view, LV_OBJ_FLAG_HIDDEN); }
+    else { lv_obj_add_flag(list_view, LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(home_view, LV_OBJ_FLAG_HIDDEN); }
 }
-
-/** LVGL timer: runs with the board lock held, so it may touch the screen. */
+static void pause_story(void) {
+    if (!playing) return;
+    int64_t elapsed = esp_timer_get_time() - started_us;
+    // Approximate audible position: clip output is buffered, so replay a little on resume.
+    if (elapsed > 300000) position_us += elapsed - 300000;
+    stop_audio();
+}
+static void start_story(void) {
+    const book_t *b = &books[selected];
+    size_t total = (size_t)(b->end - b->start);
+    size_t offset = story_packet_offset(b->start, total, (size_t)(position_us / FRAME_US));
+    if (offset >= total) { position_us = 0; offset = 0; }
+    yk_clip_t clip = {.format = YK_CLIP_OPUS, .data = b->start + offset, .bytes = total - offset};
+    if (yk_speak_clip(&clip) == ESP_OK) {
+        playing = true; started_us = esp_timer_get_time();
+        if (!deadline_us) deadline_us = started_us + SLEEP_US;
+    }
+}
+static void toggle(void) {
+    if (playing) pause_story(); else start_story();
+    refresh();
+}
+static void choose(size_t index, bool play) {
+    stop_audio(); selected = index; position_us = 0; library = false;
+    if (play) start_story();
+    refresh();
+}
+static void activity(void) { last_input_us = esp_timer_get_time(); yk_app_input(); }
+static void on_screen_click(lv_event_t *e) { (void)e; activity(); if (!library) toggle(); }
+static void on_item(lv_event_t *e) { activity(); choose((size_t)(uintptr_t)lv_event_get_user_data(e), true); }
+static void on_gesture(lv_event_t *e) {
+    (void)e; activity();
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+    if (library) {
+        if (dir == LV_DIR_BOTTOM) { library = false; refresh(); }
+    } else if (dir == LV_DIR_TOP) { library = true; refresh(); }
+    else if (dir == LV_DIR_LEFT) choose((selected + 1) % BOOKS, false);
+    else if (dir == LV_DIR_RIGHT) choose((selected + BOOKS - 1) % BOOKS, false);
+}
 static void tick(lv_timer_t *timer) {
     (void)timer;
-    if (s_tapped) {
-        s_tapped = false;
-        counter_tap(&s_count);
-        printf("BEDTIME_STORIES_TAP count=%d\n", s_count.taps);
-        show();
+    int64_t now = esp_timer_get_time();
+    if (key_tap) {
+        key_tap = false; activity();
+        if (board_display_asleep()) board_display_wake(yk_app_brightness());
+        else if (library) { library = false; refresh(); }
+        else if (playing) { pause_story(); refresh(); }
+        else board_display_sleep();
     }
-    if (s_held) {
-        s_held = false;
-        s_rounds++;
-        const bool best = counter_reset(&s_count);
-        if (best) s_best_round = s_rounds - 1;
-        printf("BEDTIME_STORIES_RESET best=%d new=%d\n", s_count.best, best);
-        show();
-    }
+    int off_s = yk_app_screen_off_s();
+    if (off_s > 0 && !board_display_asleep() && now - last_input_us >= (int64_t)off_s * 1000000) board_display_sleep();
+    if (deadline_us && now >= deadline_us) { stop_audio(); position_us = 0; deadline_us = 0; refresh(); }
+    if (playing && now - started_us > 1000000 && !yk_speak_busy()) { playing = false; position_us = 0; deadline_us = 0; refresh(); }
 }
-
-/** Leaving for Yay (a double click, app.exit): a record for the platform and what Yay shows and says when it is
- *  back. Runs in a task of yaykit_app's, cut after YK_APP_LEAVE_MS (400 ms): keep it to writing. */
-static void on_leave(void *ctx) {
-    (void)ctx;
-    const int taps = s_count.taps, rounds = s_rounds + (taps > 0);
-    if (!rounds) return;  // nothing happened: Yay just comes back
-    char data[64];
-    snprintf(data, sizeof(data), "{\"taps\":%d,\"rounds\":%d}", taps, rounds);
-    // The record waits in the outbox until Yay is online (yk_app_record): the app needs no network.
-    const bool recorded = yk_app_record("bedtimestories.count", data) == ESP_OK;
-    // The summary Yay draws in its ring: up to 3 numbers, a bead per round (the best one in coral).
-    yk_summary_t summary;
-    yk_summary_init(&summary);
-    char value[12];
-    snprintf(value, sizeof(value), "%d", rounds);
-    yk_summary_stat(&summary, value, "轮");
-    snprintf(value, sizeof(value), "%d", s_count.best > taps ? s_count.best : taps);
-    yk_summary_stat(&summary, value, "最多");
-    yk_summary_beads(&summary, rounds, &s_best_round, s_best_round >= 0);
-    summary.recorded = recorded;
-    // One sentence Yay says (not after 30 minutes), and data for the platform.
-    char sentence[48];
-    snprintf(sentence, sizeof(sentence), "数了 %d 轮", rounds);
-    cJSON *doc = cJSON_Parse(data);
-    yk_app_set_result_summary(sentence, &summary, doc);
-    cJSON_Delete(doc);
-}
-
+static void on_leave(void *ctx) { (void)ctx; yk_speak_cancel(); }
 static esp_err_t on_command(const char *name, const cJSON *args, cJSON *reply, const char **code, void *ctx) {
     (void)ctx;
-    yk_app_input();
-    esp_err_t err = yk_app_command(name, args, reply, code);  // app.exit, app.recovery, app.status
-    if (err != ESP_ERR_NOT_SUPPORTED) return err;
-    if (!strcmp(name, "bedtimestories.status")) {
-        cJSON_AddNumberToObject(reply, "taps", s_count.taps);
-        cJSON_AddNumberToObject(reply, "best", s_count.best);
-        return ESP_OK;
-    }
-    *code = "UNKNOWN_COMMAND";
-    return ESP_ERR_NOT_SUPPORTED;
+    return yk_app_command(name, args, reply, code);
 }
-
-static int heap_cmd(int argc, char **argv) {
-    (void)argc, (void)argv;
-    printf("HEAP internal=%u internal_min=%u psram=%u\n", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
-           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-    return 0;
-}
-
-static void start_console(void) {
+static void console_start(void) {
     esp_console_repl_t *repl = NULL;
     esp_console_repl_config_t cfg = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
-    cfg.prompt = APP_SLUG ">";
-    cfg.task_stack_size = 8192;
+    cfg.prompt = APP_SLUG ">"; cfg.task_stack_size = 8192;
     esp_console_dev_usb_serial_jtag_config_t usb = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&usb, &cfg, &repl));
     esp_console_register_help_command();
-    ESP_ERROR_CHECK(yk_link_register_console());
-    ESP_ERROR_CHECK(yk_app_register_console());
-    yk_ui_register_snapshot();
-    const esp_console_cmd_t heap = {.command = "heap", .help = "available memory", .func = heap_cmd};
-    ESP_ERROR_CHECK(esp_console_cmd_register(&heap));
-    ESP_ERROR_CHECK(esp_console_start_repl(repl));
+    ESP_ERROR_CHECK(yk_link_register_console()); ESP_ERROR_CHECK(yk_app_register_console());
+    yk_ui_register_snapshot(); ESP_ERROR_CHECK(esp_console_start_repl(repl));
 }
-
 void app_main(void) {
-    // 1. NVS: never erase it (it is shared with every app and holds the Wi-Fi credentials).
     esp_err_t err = nvs_flash_init();
-    if (err != ESP_OK) ESP_LOGE(TAG, "NVS unavailable (%s); running without saved settings", esp_err_to_name(err));
-    // 2. yaykit_app first, so that a crash anywhere below counts towards the crash loop guard (it also subscribes
-    //    for the double click home).
-    ESP_ERROR_CHECK(yk_app_start(&(yk_app_config_t){.slug = APP_SLUG, .version = APP_VERSION}));
-    yk_app_on_leave(on_leave, NULL);
-    // 3. Board and screen (dark until the first frame: no flash of a blank screen after the switch), then the side key.
-    if (!board_display_start_opts(&(board_display_opts_t){.start_dark = true})) {
-        ESP_LOGE(TAG, "display failed");
-        return;
-    }
-    // delay_tap: the first press of a double click (the app ring) is not a tap; a tap comes 0.45 s after its release.
-    ESP_ERROR_CHECK(yk_key_init(&(yk_key_config_t){.delay_tap = true}));
+    if (err != ESP_OK) ESP_LOGE(APP_SLUG, "NVS unavailable: %s", esp_err_to_name(err));
+    ESP_ERROR_CHECK(yk_app_start(&(yk_app_config_t){.slug=APP_SLUG,.version=APP_VERSION}));
+    yk_app_on_leave(on_leave, NULL); english = yk_app_english();
+    if (!board_display_start_opts(&(board_display_opts_t){.start_dark=true})) return;
+    ESP_ERROR_CHECK(yk_speak_init()); yk_speak_volume(yk_app_volume());
+    ESP_ERROR_CHECK(yk_key_init(&(yk_key_config_t){.delay_tap=true}));
     ESP_ERROR_CHECK(yk_app_on_key(on_key, NULL));
-    // 4. Yaykit Link: `yk info` and `yk cmd` over USB (BLE stays off until asked for).
-    const yk_link_config_t link = {.board = "tikpal-r1", .app_slug = APP_SLUG, .app_version = APP_VERSION,
-                                   .layout = "yaykit-v1", .idle_seconds = 90, .on_command = on_command};
+    const yk_link_config_t link = {.board="tikpal-r1",.app_slug=APP_SLUG,.app_version=APP_VERSION,.layout="yaykit-v1",.idle_seconds=90,.on_command=on_command};
     ESP_ERROR_CHECK(yk_link_init(&link));
-    // 5. Launch parameters from Yay (read once).
-    yk_launch_t launch;
-    if (yk_app_launch(&launch) == ESP_OK && launch.present) printf("BEDTIME_STORIES_LAUNCH intent=%s params=%s\n", launch.intent, launch.params);
-
-    // 6. The screen; then confirm the image (the bootloader would roll back an app that never gets here).
-    board_lock(-1);
-    ESP_ERROR_CHECK(cjk_font_init());
-    lv_obj_t *screen = lv_obj_create(NULL);
-    lv_obj_set_scrollable(screen, false);
-    // The round-screen spec's colours and sizes (yk_round.h): the same on every firmware.
-    lv_obj_set_style_bg_color(screen, lv_color_hex(YK_PAPER), 0);
-    yk_ui_label(screen, "计数", 0, 100, 466, YK_SIZE_STATUS, YK_SAGE_TEXT);
-    s_value = yk_ui_label(screen, "", 0, 190, 466, 44, YK_INK);
-    yk_ui_label(screen, "短按加一 · 按住清零", 0, 330, 466, YK_SIZE_MIN, YK_INK2);
-    show();
-    lv_screen_load(screen);
-    lv_refr_now(NULL);
-    // Yay's settings through yaykit_app (0.1.13): the brightness (capped while the battery is low), and as needed
-    // yk_app_screen_off_s() for the screen-off, yk_app_volume() / yk_app_set_volume(), yk_app_english(). The battery
-    // guard (sleep when it runs out) comes with yk_app_start() and yk_app_ready() by itself.
-    board_brightness_set(yk_app_brightness());
-    // The first time in this app: an arrow at the side key, 「双击：应用和回家」 (yk_hint, P24), until the app ring was
-    // opened once. Any press takes it away (yaykit_app).
-    if (yk_hint_should(YK_HINT_APPS)) yk_hint_show(screen, YK_HINT_APPS, NULL);
-    lv_timer_create(tick, 50, NULL);
-    board_unlock();
-    // 7. The console, then yk_app_ready(): its banner tells tools the app is up, so the console must already
-    //    listen (a command sent right after the banner was lost when the console came second).
-    start_console();
-    yk_app_ready();
+    yk_launch_t launch; (void)yk_app_launch(&launch);
+    board_lock(-1); ESP_ERROR_CHECK(cjk_font_init());
+    lv_obj_t *screen = lv_obj_create(NULL); lv_obj_set_scrollable(screen, false);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), 0);
+    lv_obj_add_event_cb(screen,on_gesture,LV_EVENT_GESTURE,NULL);
+    home_view=lv_obj_create(screen); lv_obj_remove_style_all(home_view); lv_obj_set_size(home_view,466,466); lv_obj_set_scrollable(home_view,false);
+    lv_obj_add_flag(home_view, LV_OBJ_FLAG_EVENT_BUBBLE); lv_obj_add_event_cb(home_view,on_screen_click,LV_EVENT_CLICKED,NULL);
+    heading=yk_ui_label(home_view,"",0,65,466,YK_SIZE_STATUS,YK_SAGE_TEXT);
+    book_shape=lv_obj_create(home_view); lv_obj_remove_style_all(book_shape); lv_obj_set_size(book_shape,124,120); lv_obj_set_pos(book_shape,171,130); lv_obj_set_style_radius(book_shape,14,0); lv_obj_remove_flag(book_shape,LV_OBJ_FLAG_CLICKABLE);
+    mark_label=yk_ui_label(home_view,"",0,157,466,YK_SIZE_HEADING,YK_PAPER);
+    name_label=yk_ui_label(home_view,"",55,270,356,YK_SIZE_HEADING,YK_INK);
+    hint_label=yk_ui_label(home_view,"",0,350,466,YK_SIZE_MIN,YK_INK2);
+    list_view=lv_obj_create(screen); lv_obj_remove_style_all(list_view); lv_obj_set_size(list_view,466,466); lv_obj_set_scrollable(list_view,false); lv_obj_add_flag(list_view,LV_OBJ_FLAG_EVENT_BUBBLE);
+    yk_ui_label(list_view,T("全部故事","All stories"),0,65,466,YK_SIZE_HEADING,YK_SAGE_TEXT);
+    for (size_t i=0;i<BOOKS;i++) {
+        lv_obj_t *row=lv_obj_create(list_view); lv_obj_remove_style_all(row); lv_obj_set_pos(row,63,125+(int)i*74); lv_obj_set_size(row,340,66); lv_obj_set_style_bg_color(row,lv_color_hex(YK_PANEL),0); lv_obj_set_style_bg_opa(row,LV_OPA_COVER,0); lv_obj_set_style_radius(row,16,0); lv_obj_set_scrollable(row,false); lv_obj_add_flag(row,LV_OBJ_FLAG_EVENT_BUBBLE); lv_obj_add_event_cb(row,on_item,LV_EVENT_CLICKED,(void *)(uintptr_t)i);
+        yk_ui_label(row,english?books[i].en:books[i].zh,0,18,340,YK_SIZE_SUBTITLE_SMALL,YK_INK);
+    }
+    yk_ui_label(list_view,T("点故事播放 · 下滑返回","Tap a story · Swipe down"),0,370,466,YK_SIZE_MIN,YK_INK2);
+    refresh(); lv_screen_load(screen); lv_refr_now(NULL); board_brightness_set(yk_app_brightness());
+    if (yk_hint_should(YK_HINT_APPS)) yk_hint_show(screen,YK_HINT_APPS,NULL);
+    last_input_us = esp_timer_get_time(); lv_timer_create(tick,100,NULL); board_unlock();
+    console_start(); yk_app_ready();
 }
