@@ -1,7 +1,7 @@
 {
   "slug": "bedtime-stories",
   "kind": "extension",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "name": {
     "zh": "晚安故事",
     "en": "Bedtime Stories"
@@ -10,8 +10,8 @@
     "tikpal-r1"
   ],
   "layout": "yaykit-v1",
-  "minYay": "0.1.10",
-  "apiLevel": 3,
+  "minYay": "0.1.14",
+  "apiLevel": 4,
   "capabilities": {},
   "launch": {
     "summary": {
