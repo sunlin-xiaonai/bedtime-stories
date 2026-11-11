@@ -20,7 +20,7 @@
 #include "yk_hint.h"
 
 #define APP_SLUG "bedtime-stories"
-#define PREFS "yk_bedtime"
+#define PREFS "yk_bedtimestori"
 #define FRAME_US 20000LL
 #define SHELF_PANEL 0x202A23
 
