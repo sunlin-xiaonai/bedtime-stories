@@ -43,7 +43,7 @@
   "scenes": [
     "tools"
   ],
-  "audience": "all",
+  "audience": "kids",
   "pricing": {
     "kind": "free"
   },
@@ -56,5 +56,8 @@
       "tf_card"
     ]
   },
-  "ageRating": "4+"
+  "ageRating": "4+",
+  "privacy": {
+    "collects": []
+  }
 }

@@ -7,7 +7,7 @@ art = Path(__file__).resolve().parent.parent / 'main' / 'art'
 panel = (0x20 >> 3) << 11 | (0x2A >> 2) << 5 | (0x23 >> 3)
 background = panel.to_bytes(2, 'little')
 
-for name in ('plant', 'book', 'animal', 'train', 'cat'):
+for name in ('plant', 'book', 'animal'):
     image = bytearray((art / f'{name}.bin').read_bytes())
     if len(image) != 160 * 140 * 2:
         raise ValueError(f'{name}: unexpected cover size')

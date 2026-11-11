@@ -37,18 +37,5 @@ const story_entry_t story_catalog[] = {
     {"0324", "离家进城的那一天", "05223c00d7bc83f0f179fe303a0b785d0a9eb8cadbcc4214abda80173b89d428", 619560, 2, 0, NULL, NULL},
     {"0337", "蜡做的孩子", "f390859cb359188ada3b504d67aa0b8319159b26b85235e2da30737c6e147c4c", 229680, 0, 0, NULL, NULL},
     {"0342", "惩罚", "3d320bfdebe074f37eb0e86b6900eaa60aa2531ca34f155418fc508f9bb21117", 229166, 1, 0, NULL, NULL},
-    {"9001", "托马斯英文·托马斯与巴蒂", "509909f8060c064259956a747a99f1a3ef00240ae7f934d8c7eed3d256fdb342", 882049, 3, 1, NULL, NULL},
-    {"9002", "托马斯英文·托马斯的列车", "3d63b73a98973f24032ddb4663326b2fdf3faff8a41fc1931e0d07fe3c82424c", 916101, 3, 1, NULL, NULL},
-    {"9003", "托马斯英文·亨利和许愿树", "bfde57a207f71d305c41609cd83ae55de7533950b842c17951f1867635be6910", 1033552, 3, 1, NULL, NULL},
-    {"9004", "托马斯英文·培西和风琴", "728e67e20930fe9e9c46a435f90118c64269827893e6e36d0cffaf61b413289a", 1449024, 3, 1, NULL, NULL},
-    {"9005", "托马斯英文·培西和哈罗德", "f41e716bfc459e267b462f6bf04d6a30bc4f2bb6442289323ff85fe53852c452", 826345, 3, 1, NULL, NULL},
-    {"9006", "托马斯英文·托马斯的圣诞派对", "1f2724236e95989e3a38048bacc1e1e3b748bf738d38fe24cbf6ebeef12c00bd", 1023389, 3, 1, NULL, NULL},
-    {"9007", "托马斯英文·托马斯和布鲁诺", "78129d4bc90424d29b69db995171fadab2cd575de9e74f96532ac5a38ec32f1c", 913395, 3, 1, NULL, NULL},
-    {"9008", "托马斯英文·高登脱轨了", "634afbc860371fdeb1b4ec238c2fef0130239d0174d45c24af1876663ceabf37", 974891, 3, 1, NULL, NULL},
-    {"9101", "猫和老鼠英文·不是奶酪", "1fdfb94d438df0c9b20ea1ce42e7ac781b81db9148147a91dd142f42e7298cb6", 405249, 4, 1, NULL, NULL},
-    {"9102", "猫和老鼠英文·汪汪队奇遇", "4ee25c57d6c0ffff968d360e1d64b086972dcfcb76eeac0a4c2b4a2dc5ecd30f", 2055971, 4, 1, NULL, NULL},
-    {"9103", "猫和老鼠英文·安静的夜晚", "46b00d820e048bfeed5b09c2cbecaa16b9b9f1713b5b799de7021d7d16b2b169", 1085476, 4, 1, NULL, NULL},
 };
 _Static_assert(sizeof(story_catalog) / sizeof(story_catalog[0]) == STORY_COUNT, "catalog count");
-_Static_assert(CAT_INDEX + CAT_COUNT == STORY_COUNT, "podcast catalog placement");
-const size_t story_catalog_count = sizeof(story_catalog) / sizeof(story_catalog[0]);

@@ -4,5 +4,6 @@
 #include "catalog.h"
 #include "esp_err.h"
 void sd_probe_register(void);
-esp_err_t sd_scan_stories(unsigned char *available, size_t count);
+esp_err_t sd_scan_stories(unsigned char available[STORY_COUNT],
+                          story_entry_t local[LOCAL_STORY_LIMIT], size_t *local_count);
 uint8_t *sd_read_story(const story_entry_t *book, size_t *bytes);

@@ -22,9 +22,8 @@
 #include "yaykit_app.h"
 
 #define MOUNT "/sdcard"
-#define DIR MOUNT "/bedtime"
+#define STORY_DIR MOUNT "/bedtime"
 #define CHUNK 512
-#define FILE_MAX (2 * 1024 * 1024)
 
 static SemaphoreHandle_t sd_lock;
 static esp_err_t mount_card(sdmmc_card_t **card) {
@@ -82,15 +81,15 @@ static int sdload(int argc, char **argv) {
         puts("SDLOAD_ERROR invalid arguments"); return 1;
     }
     errno = 0; unsigned long len = strtoul(argv[2], &end, 10);
-    if (errno || !end || *end || !len || len > FILE_MAX) { puts("SDLOAD_ERROR invalid length"); return 1; }
+    if (errno || !end || *end || !len || len > STORY_FILE_MAX) { puts("SDLOAD_ERROR invalid length"); return 1; }
     yk_app_input();
     sdmmc_card_t *card = NULL; esp_err_t err = mount_card(&card);
     if (err != ESP_OK) { printf("SDLOAD_ERROR card=%s\n", esp_err_to_name(err)); return 1; }
     int rc = 1, fd = -1; bool created = false;
     char path[48], tmp[48];
-    snprintf(path, sizeof(path), DIR "/%s.bin", argv[1]);
-    snprintf(tmp, sizeof(tmp), DIR "/%s.tmp", argv[1]);
-    if (mkdir(DIR, 0755) != 0 && errno != EEXIST) { puts("SDLOAD_ERROR directory"); goto done; }
+    snprintf(path, sizeof(path), STORY_DIR "/%s.bin", argv[1]);
+    snprintf(tmp, sizeof(tmp), STORY_DIR "/%s.tmp", argv[1]);
+    if (mkdir(STORY_DIR, 0755) != 0 && errno != EEXIST) { puts("SDLOAD_ERROR directory"); goto done; }
     struct stat st;
     if (stat(path, &st) == 0) {
         if (file_hash(path, len, expected)) { printf("SDLOAD_EXISTS %s\n", argv[1]); rc = 0; }
@@ -138,33 +137,38 @@ done:
     fflush(stdout); return rc;
 }
 #endif
-esp_err_t sd_scan_stories(unsigned char *available, size_t count) {
-    if (!available || count != story_catalog_count) return ESP_ERR_INVALID_ARG;
+esp_err_t sd_scan_stories(unsigned char available[STORY_COUNT],
+                          story_entry_t local[LOCAL_STORY_LIMIT], size_t *local_count) {
+    *local_count = 0;
     sdmmc_card_t *card = NULL;
     esp_err_t err = mount_card(&card);
     if (err != ESP_OK) return err;
-    for (size_t i = 0; i < count; i++) {
+    for (size_t i = 0; i < STORY_COUNT; i++) {
         char path[48]; struct stat st;
-        snprintf(path, sizeof(path), DIR "/%s.bin", story_catalog[i].id);
+        snprintf(path, sizeof(path), STORY_DIR "/%s.bin", story_catalog[i].id);
         if (stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size == story_catalog[i].size)
             available[i] = 1;
     }
-    return unmount_card(card);
+    const size_t found = story_local_scan(STORY_DIR, story_catalog, STORY_COUNT, local, LOCAL_STORY_LIMIT);
+    err = unmount_card(card);
+    if (err == ESP_OK) *local_count = found;
+    return err;
 }
 uint8_t *sd_read_story(const story_entry_t *book, size_t *bytes) {
-    if (!book || !bytes || !story_valid_id(book->id) || !book->size || book->size > FILE_MAX) return NULL;
+    if (!book || !bytes || !story_valid_id(book->id) || !book->size || book->size > STORY_FILE_MAX) return NULL;
     unsigned char expected[32], actual[32];
-    if (!hex_digest(book->sha256, expected)) return NULL;
+    if (book->sha256 && !hex_digest(book->sha256, expected)) return NULL;
     sdmmc_card_t *card = NULL;
     if (mount_card(&card) != ESP_OK) return NULL;
-    char path[48]; snprintf(path, sizeof(path), DIR "/%s.bin", book->id);
+    char path[48]; snprintf(path, sizeof(path), STORY_DIR "/%s.bin", book->id);
     struct stat st; FILE *f = NULL; uint8_t *data = NULL;
     if (stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size == book->size &&
         (f = fopen(path, "rb")) != NULL &&
         (data = heap_caps_malloc(book->size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) != NULL) {
         const size_t got = fread(data, 1, book->size, f);
         if (got != book->size || ferror(f) ||
-            mbedtls_sha256(data, book->size, actual, 0) != 0 || memcmp(actual, expected, 32)) {
+            (book->sha256 ? (mbedtls_sha256(data, got, actual, 0) != 0 || memcmp(actual, expected, 32))
+                          : !story_clip_valid(data, got))) {
             free(data); data = NULL;
         }
     }

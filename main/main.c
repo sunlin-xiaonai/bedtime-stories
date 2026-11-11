@@ -23,8 +23,11 @@
 #define PREFS "yk_bedtimestori"
 #define FRAME_US 20000LL
 #define SHELF_PANEL 0x202A23
+#define SHELF_LIMIT (STORY_COUNT + LOCAL_STORY_LIMIT)
 
-static unsigned char available[STORY_COUNT], autoplay[STORY_COUNT];
+static unsigned char available[SHELF_LIMIT], autoplay[STORY_COUNT];
+static story_entry_t local_stories[LOCAL_STORY_LIMIT];
+static size_t shelf_count = STORY_COUNT;
 static size_t selected;
 static bool playing, library, repeat_one, playback_error;
 static unsigned timer_choice;
@@ -42,16 +45,12 @@ static volatile bool test_inspect, test_redraw;
 extern const uint8_t plant_img[] asm("_binary_plant_bin_start");
 extern const uint8_t book_img[] asm("_binary_book_bin_start");
 extern const uint8_t animal_img[] asm("_binary_animal_bin_start");
-extern const uint8_t train_img[] asm("_binary_train_bin_start");
-extern const uint8_t cat_img[] asm("_binary_cat_bin_start");
 extern const uint8_t plant_thumb[] asm("_binary_plant_thumb_bin_start");
 extern const uint8_t book_thumb[] asm("_binary_book_thumb_bin_start");
 extern const uint8_t animal_thumb[] asm("_binary_animal_thumb_bin_start");
-extern const uint8_t train_thumb[] asm("_binary_train_thumb_bin_start");
-extern const uint8_t cat_thumb[] asm("_binary_cat_thumb_bin_start");
-static lv_image_dsc_t pictures[5];
-static lv_image_dsc_t thumbnails[5];
-static lv_obj_t *shelf_rows[STORY_COUNT];
+static lv_image_dsc_t pictures[3];
+static lv_image_dsc_t thumbnails[3];
+static lv_obj_t *shelf_rows[SHELF_LIMIT];
 static lv_obj_t *home_view, *list_view, *list_rows, *heading, *name_label, *hint_label, *book_shape;
 static lv_obj_t *library_title, *mode_label, *timer_label;
 
@@ -90,20 +89,30 @@ static void update_controls(void) {
     else snprintf(timer, sizeof(timer), "不限时");
     lv_label_set_text(timer_label, timer);
 }
+static const story_entry_t *shelf_entry(size_t index) {
+    return index < STORY_COUNT ? &story_catalog[index] : &local_stories[index - STORY_COUNT];
+}
+static const char *display_title(const story_entry_t *book, char title[32]) {
+    if (book->title) return book->title;
+    snprintf(title, 32, "本地音频 %s", book->id);
+    return title;
+}
 static void refresh(void) {
     player_status_t state = player_status();
+    const story_entry_t *book = shelf_entry(selected);
     const char *title = playback_error ? "故事暂不可用" :
         playing && state.generation == play_generation && state.state == PLAYER_LOADING ? "正在准备" :
         playing ? "正在播放" : "晚安故事";
     lv_label_set_text(heading, title);
-    lv_label_set_text(name_label, story_catalog[selected].title);
+    char local_title[32];
+    lv_label_set_text(name_label, display_title(book, local_title));
     lv_label_set_text(hint_label, playback_error ? "上滑选择其他故事" :
                       playing ? "轻点屏幕暂停" :
-                      !story_catalog[selected].bedtime_ok ? "家长陪同 · 轻点播放" : "轻点屏幕播放");
-    lv_image_set_src(book_shape, &pictures[story_catalog[selected].art]);
+                      !book->bedtime_ok ? "家长陪同 · 轻点播放" : "轻点屏幕播放");
+    lv_image_set_src(book_shape, &pictures[book->art]);
     lv_obj_set_hidden(home_view, library);
     lv_obj_set_hidden(list_view, !library);
-    for (size_t i=0; i<story_catalog_count; i++)
+    for (size_t i=0; i<shelf_count; i++)
         if (shelf_rows[i]) lv_obj_set_state(shelf_rows[i], LV_STATE_CHECKED, i == selected);
     update_controls();
 }
@@ -121,12 +130,12 @@ static void pause_story(void) {
 static void start_story(void) {
     playback_error = false;
     playing = true;
-    play_generation = player_play(&story_catalog[selected], position_us);
+    play_generation = player_play(shelf_entry(selected), position_us);
     if (!deadline_us) set_deadline(esp_timer_get_time());
 }
 static void toggle(void) { if (playing) pause_story(); else start_story(); refresh(); }
 static void choose(size_t index, bool play) {
-    if (index >= story_catalog_count || !available[index]) return;
+    if (index >= shelf_count || !available[index]) return;
     stop_audio(); selected = index; position_us = 0; library = false; playback_error = false;
     if (play) start_story();
     refresh();
@@ -147,8 +156,8 @@ static void on_gesture(lv_event_t *e) {
         // Vertical gestures belong to the scrollable shelf; the side key goes back.
         if (dir == LV_DIR_RIGHT) { library = false; refresh(); }
     } else if (dir == LV_DIR_TOP) { library = true; refresh(); }
-    else if (dir == LV_DIR_LEFT) choose(story_step(selected, available, story_catalog_count, 1), false);
-    else if (dir == LV_DIR_RIGHT) choose(story_step(selected, available, story_catalog_count, -1), false);
+    else if (dir == LV_DIR_LEFT) choose(story_step(selected, available, shelf_count, 1), false);
+    else if (dir == LV_DIR_RIGHT) choose(story_step(selected, available, shelf_count, -1), false);
 }
 static void tick(lv_timer_t *timer) {
     (void)timer;
@@ -199,12 +208,19 @@ static void tick(lv_timer_t *timer) {
     if (playing) {
         player_status_t s = player_status();
         if (s.generation == play_generation && s.state == PLAYER_DONE) {
-            size_t next = story_next(selected, autoplay, story_catalog_count, repeat_one);
-            printf("BEDTIME_NEXT from=%s to=%s mode=%s\n", story_catalog[selected].id, story_catalog[next].id, repeat_one ? "one" : "selected");
-            choose(next, true);
+            size_t next = story_next(selected, autoplay, STORY_COUNT, repeat_one);
+            if (next == SIZE_MAX) {
+                stop_audio(); position_us = 0; deadline_us = 0; refresh();
+            } else {
+#if CONFIG_YAY_DEV
+                printf("BEDTIME_NEXT from=%s to=%s mode=%s\n", shelf_entry(selected)->id,
+                       shelf_entry(next)->id, repeat_one ? "one" : "selected");
+#endif
+                choose(next, true);
+            }
         } else if (s.generation == play_generation && s.state == PLAYER_ERROR) {
             stop_audio(); position_us = 0; deadline_us = 0; playback_error = true;
-            printf("BEDTIME_PLAY_ERROR id=%s\n", story_catalog[selected].id); refresh();
+            puts("BEDTIME_PLAY_ERROR"); refresh();
         } else if (s.generation == play_generation && s.state == PLAYER_PLAYING &&
                    strcmp(lv_label_get_text(heading), "正在播放")) refresh();
     }
@@ -218,8 +234,8 @@ static int bedtest(int argc, char **argv) {
     if (argc == 1 || !strcmp(argv[1], "status")) {
         player_status_t s = player_status();
         unsigned count = 0, safe = 0;
-        for (size_t i=0; i<story_catalog_count; i++) { count += available[i] != 0; safe += autoplay[i] != 0; }
-        printf("BEDTEST id=%s playing=%d worker=%d gen=%u deadline=%d one=%d count=%u selected=%u\n", story_catalog[selected].id,
+        for (size_t i=0; i<shelf_count; i++) { count += available[i] != 0; safe += i < STORY_COUNT && autoplay[i]; }
+        printf("BEDTEST id=%s playing=%d worker=%d gen=%u deadline=%d one=%d count=%u selected=%u\n", shelf_entry(selected)->id,
                playing, s.state, (unsigned)s.generation, deadline_us != 0, repeat_one, count, safe);
         return 0;
     }
@@ -227,10 +243,10 @@ static int bedtest(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "home")) { test_shelf=2; return 0; }
     if (argc == 2 && !strcmp(argv[1], "inspect")) { test_inspect=true; return 0; }
     if (argc == 2 && !strcmp(argv[1], "redraw")) { test_redraw=true; return 0; }
-    if (argc == 3 && !strcmp(argv[1], "scroll")) { int y=atoi(argv[2]); if (y>=0 && y<=3000) { test_scroll=y; return 0; } }
-    if (argc == 3 && !strcmp(argv[1], "row")) { int n=atoi(argv[2]); if (n>=0 && n<STORY_COUNT) { test_row=n; return 0; } }
+    if (argc == 3 && !strcmp(argv[1], "scroll")) { int y=atoi(argv[2]); if (y>=0 && y<=SHELF_LIMIT*75) { test_scroll=y; return 0; } }
+    if (argc == 3 && !strcmp(argv[1], "row")) { int n=atoi(argv[2]); if (n>=0 && n<SHELF_LIMIT) { test_row=n; return 0; } }
     if (argc == 3 && !strcmp(argv[1], "play")) {
-        for (size_t i=0; i<story_catalog_count; i++) if (!strcmp(argv[2], story_catalog[i].id) && available[i]) { test_play=(int)i; return 0; }
+        for (size_t i=0; i<shelf_count; i++) if (!strcmp(argv[2], shelf_entry(i)->id) && available[i]) { test_play=(int)i; return 0; }
     }
     if (argc == 3 && !strcmp(argv[1], "timer")) { int n=atoi(argv[2]); if (n>=0 && n<=60) { test_timer=n; return 0; } }
     if (argc == 3 && !strcmp(argv[1], "mode")) {
@@ -269,11 +285,9 @@ static void rebuild_shelf(void) {
     lv_obj_clean(list_rows);
     memset(shelf_rows, 0, sizeof(shelf_rows));
     size_t rownum = 0;
-    for (size_t pos=0; pos<story_catalog_count; pos++) {
-        const size_t lead = 3, featured = THOMAS_COUNT + CAT_COUNT;
-        size_t i = pos < lead ? pos : pos < lead + CAT_COUNT ? CAT_INDEX + pos - lead :
-                   pos < lead + featured ? THOMAS_FIRST + pos - lead - CAT_COUNT : pos - featured;
+    for (size_t i=0; i<shelf_count; i++) {
         if (!available[i]) continue;
+        const story_entry_t *book = shelf_entry(i);
         lv_obj_t *row = lv_obj_create(list_rows);
         shelf_rows[i] = row;
         lv_obj_remove_style_all(row); lv_obj_set_pos(row, 0, (int)rownum * 75); lv_obj_set_size(row, 316, 69);
@@ -284,20 +298,15 @@ static void rebuild_shelf(void) {
         lv_obj_set_style_radius(row, 14, 0); lv_obj_set_scrollable(row, false);
         lv_obj_set_event_bubble(row, true); lv_obj_add_event_cb(row, on_item, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
         lv_obj_t *cover = lv_image_create(row);
-        lv_image_set_src(cover, &thumbnails[story_catalog[i].art]);
+        lv_image_set_src(cover, &thumbnails[book->art]);
         lv_obj_set_pos(cover, 9, 11); lv_obj_set_clickable(cover, false);
-        const char *title = story_catalog[i].title;
-        const char *category = story_catalog[i].bedtime_ok ? "中文故事" : "建议家长陪同";
-        if (i >= THOMAS_FIRST) {
-            const char *separator = strstr(title, "·");
-            if (separator) title = separator + strlen("·");
-            category = i >= CAT_INDEX ? "猫和老鼠 · 英文" : "托马斯 · 英文";
-        }
-        lv_obj_t *label = yk_ui_label(row, title, 72, 9, 230, YK_SIZE_SUBTITLE_SMALL, YK_INK);
+        char local_title[32];
+        const char *category = !book->title ? "TF 卡 · 家长陪同" : book->bedtime_ok ? "中文故事" : "建议家长陪同";
+        lv_obj_t *label = yk_ui_label(row, display_title(book, local_title), 72, 9, 230, YK_SIZE_SUBTITLE_SMALL, YK_INK);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
         lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
         lv_obj_t *sub = yk_ui_label(row, category, 72, 40, 230, YK_SIZE_MIN,
-                                    story_catalog[i].bedtime_ok ? YK_SAGE_TEXT : YK_CORAL_TEXT);
+                                    book->bedtime_ok ? YK_SAGE_TEXT : YK_CORAL_TEXT);
         lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_LEFT, 0);
         rownum++;
     }
@@ -324,7 +333,10 @@ void app_main(void) {
     const yk_link_config_t link = {.board="tikpal-r1",.app_slug=APP_SLUG,.app_version=APP_VERSION,.layout="yaykit-v1",.idle_seconds=90,.on_command=on_command};
     ESP_ERROR_CHECK(yk_link_init(&link));
     yk_launch_t launch; (void)yk_app_launch(&launch);
-    for (size_t i=0; i<story_catalog_count && i<STORY_COUNT; i++) available[i] = story_catalog[i].builtin_start != NULL;
+    for (size_t i=0; i<STORY_COUNT; i++) {
+        available[i] = story_catalog[i].builtin_start != NULL;
+        autoplay[i] = available[i] && story_catalog[i].bedtime_ok;
+    }
     board_lock(-1); ESP_ERROR_CHECK(cjk_font_init());
     lv_obj_t *screen = lv_obj_create(NULL); lv_obj_set_scrollable(screen, false);
     lv_obj_set_style_bg_color(screen, lv_color_hex(YK_NIGHT), 0);
@@ -332,9 +344,9 @@ void app_main(void) {
     home_view=lv_obj_create(screen); lv_obj_remove_style_all(home_view); lv_obj_set_size(home_view,466,466); lv_obj_set_scrollable(home_view,false);
     lv_obj_set_event_bubble(home_view, true); lv_obj_add_event_cb(home_view,on_screen_click,LV_EVENT_CLICKED,NULL);
     heading=yk_ui_label(home_view,"",0,65,466,YK_SIZE_STATUS,YK_SAGE_TEXT);
-    const uint8_t *art[] = {plant_img, book_img, animal_img, train_img, cat_img};
+    const uint8_t *art[] = {plant_img, book_img, animal_img};
     for (size_t i=0; i<sizeof(art)/sizeof(art[0]); i++) pictures[i] = (lv_image_dsc_t){.header={.magic=LV_IMAGE_HEADER_MAGIC,.cf=LV_COLOR_FORMAT_RGB565,.w=160,.h=140,.stride=320},.data_size=160*140*2,.data=art[i]};
-    const uint8_t *small[] = {plant_thumb, book_thumb, animal_thumb, train_thumb, cat_thumb};
+    const uint8_t *small[] = {plant_thumb, book_thumb, animal_thumb};
     for (size_t i=0; i<sizeof(small)/sizeof(small[0]); i++) thumbnails[i] = (lv_image_dsc_t){.header={.magic=LV_IMAGE_HEADER_MAGIC,.cf=LV_COLOR_FORMAT_RGB565,.w=52,.h=46,.stride=104},.data_size=52*46*2,.data=small[i]};
     lv_obj_t *halo=lv_obj_create(home_view); lv_obj_remove_style_all(halo);
     lv_obj_set_pos(halo, 143, 96); lv_obj_set_size(halo, 180, 180);
@@ -362,13 +374,19 @@ void app_main(void) {
     last_input_us = esp_timer_get_time(); lv_timer_create(tick,100,NULL); board_unlock();
     console_start(); ESP_ERROR_CHECK(player_init()); yk_app_ready();
     unsigned char found[STORY_COUNT] = {0};
-    for (size_t i=0; i<story_catalog_count; i++) found[i] = story_catalog[i].builtin_start != NULL;
-    err = sd_scan_stories(found, STORY_COUNT);
-    if (err != ESP_OK) ESP_LOGW(APP_SLUG, "SD card unavailable: %s", esp_err_to_name(err));
+    for (size_t i=0; i<STORY_COUNT; i++) found[i] = story_catalog[i].builtin_start != NULL;
+    size_t local_count;
+    err = sd_scan_stories(found, local_stories, &local_count);
+    if (err != ESP_OK) {
+        ESP_LOGW(APP_SLUG, "SD card unavailable: %s", esp_err_to_name(err));
+        return;
+    }
     board_lock(-1);
-    for (size_t i=0; i<story_catalog_count; i++) {
+    for (size_t i=0; i<STORY_COUNT; i++) {
         available[i] = found[i]; autoplay[i] = found[i] && story_catalog[i].bedtime_ok;
     }
+    memset(available + STORY_COUNT, 1, local_count);
+    shelf_count = STORY_COUNT + local_count;
     rebuild_shelf(); refresh(); board_unlock();
-    printf("BEDTIME_CATALOG count=%u card=%s\n", (unsigned)story_catalog_count, err == ESP_OK ? "ready" : "unavailable");
+    printf("BEDTIME_CATALOG count=%u card=ready\n", (unsigned)(STORY_COUNT + local_count));
 }
