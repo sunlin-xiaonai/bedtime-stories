@@ -22,7 +22,7 @@
 #include "yaykit_app.h"
 
 #define MOUNT "/sdcard"
-#define STORY_DIR MOUNT "/bedtime"
+#define STORY_DIR MOUNT "/bedtimestories"
 #define CHUNK 512
 
 static SemaphoreHandle_t sd_lock;
