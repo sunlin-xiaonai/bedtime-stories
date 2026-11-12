@@ -199,6 +199,11 @@ static void tick(lv_timer_t *timer) {
     if (test_timer >= 0) { int seconds = test_timer; test_timer = -1; deadline_us = seconds ? now + (int64_t)seconds * 1000000 : 0; }
     if (test_mode >= 0) { repeat_one = test_mode != 0; test_mode = -1; refresh(); }
 #endif
+    // Keep the screen lit while the system app ring or the go-back card is open, so they can always be seen.
+    if (yk_apps_is_open() || yk_apps_ask_is_open()) {
+        if (board_display_asleep()) board_display_wake(yk_app_brightness());
+        last_input_us = now;
+    }
     int off_s = board_pref_screen_off_s();
     if (off_s > 0 && !board_display_asleep() && now - last_input_us >= (int64_t)off_s * 1000000) board_display_sleep();
     if (deadline_us && now >= deadline_us) {
